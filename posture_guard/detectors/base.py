@@ -36,6 +36,13 @@ class PostureDetector(Protocol):
         was confidently detected."""
         ...
 
+    def draw_debug(self, frame_bgr: np.ndarray) -> np.ndarray:
+        """Return a copy of frame_bgr annotated with whatever this backend
+        used for its most recent detect() call (skeleton points, face box,
+        etc). For on-screen debugging only — the annotated copy is never
+        persisted or transmitted."""
+        ...
+
     def close(self) -> None:
         """Release any underlying model/resources."""
         ...

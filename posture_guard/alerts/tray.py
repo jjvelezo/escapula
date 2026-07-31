@@ -44,12 +44,15 @@ class TrayController:
         on_pause_toggle: Callable[[bool], None],
         on_recalibrate: Callable[[], None],
         on_quit: Callable[[], None],
+        blink_interval_seconds: float = 0.5,
     ):
         self._on_pause_toggle = on_pause_toggle
         self._on_recalibrate = on_recalibrate
         self._on_quit = on_quit
+        self._blink_interval_seconds = blink_interval_seconds
         self._paused = False
         self._icons = {state: _make_icon_image(color) for state, color in _COLORS.items()}
+        self._icons["off"] = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
 
         menu = pystray.Menu(
             pystray.MenuItem(self._pause_label, self._handle_pause_toggle),
@@ -57,6 +60,10 @@ class TrayController:
             pystray.MenuItem("Salir", self._handle_quit),
         )
         self.icon = pystray.Icon("escapula", self._icons["unknown"], "Escapula", menu)
+
+        self._current_state: TrayState = "unknown"
+        self._stop_event = threading.Event()
+        self._blink_thread = threading.Thread(target=self._blink_loop, daemon=True)
 
     def _pause_label(self, item) -> str:
         return "Reanudar" if self._paused else "Pausar"
@@ -74,13 +81,25 @@ class TrayController:
         self.icon.stop()
 
     def set_state(self, state: TrayState) -> None:
-        self.icon.icon = self._icons[state]
+        self._current_state = state
         self.icon.title = f"Escapula - {_LABELS[state]}"
+        if state != "alerted":
+            self.icon.icon = self._icons[state]
+
+    def _blink_loop(self) -> None:
+        blink_on = True
+        while not self._stop_event.is_set():
+            if self._current_state == "alerted":
+                self.icon.icon = self._icons["alerted"] if blink_on else self._icons["off"]
+                blink_on = not blink_on
+            self._stop_event.wait(self._blink_interval_seconds)
 
     def run_detached(self) -> threading.Thread:
         thread = threading.Thread(target=self.icon.run, daemon=True)
         thread.start()
+        self._blink_thread.start()
         return thread
 
     def stop(self) -> None:
+        self._stop_event.set()
         self.icon.stop()

@@ -10,6 +10,7 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
+import cv2
 import numpy as np
 from mediapipe.tasks.python import vision
 from mediapipe.tasks.python.core.base_options import BaseOptions
@@ -45,6 +46,7 @@ class AIPostureDetector:
         )
         self._landmarker = vision.PoseLandmarker.create_from_options(options)
         self._start_time = time.monotonic()
+        self._last_landmarks: Optional[list] = None
 
     def detect(self, frame_bgr: np.ndarray) -> Optional[PostureReading]:
         frame_rgb = np.ascontiguousarray(frame_bgr[:, :, ::-1])
@@ -53,10 +55,12 @@ class AIPostureDetector:
         result = self._landmarker.detect_for_video(mp_image, timestamp_ms)
 
         if not result.pose_landmarks:
+            self._last_landmarks = None
             return None
 
         raw = result.pose_landmarks[0]
         landmarks = [ang.Landmark(lm.x, lm.y, lm.visibility) for lm in raw]
+        self._last_landmarks = landmarks
 
         neck_angle = ang.neck_forward_angle(landmarks)
         shoulder_metric = ang.shoulder_slouch_metric(landmarks)
@@ -70,6 +74,40 @@ class AIPostureDetector:
             shoulder_metric=shoulder_metric,
             scale_px=scale_px,
         )
+
+    def draw_debug(self, frame_bgr: np.ndarray) -> np.ndarray:
+        annotated = frame_bgr.copy()
+        landmarks = self._last_landmarks
+        if landmarks is None:
+            return annotated
+
+        h, w = annotated.shape[:2]
+
+        def px(idx: int) -> Optional[tuple]:
+            lm = landmarks[idx]
+            if lm.visibility < ang.VISIBILITY_THRESHOLD:
+                return None
+            return int(lm.x * w), int(lm.y * h)
+
+        connections = [
+            (ang.LEFT_EAR, ang.LEFT_SHOULDER),
+            (ang.RIGHT_EAR, ang.RIGHT_SHOULDER),
+            (ang.LEFT_SHOULDER, ang.RIGHT_SHOULDER),
+            (ang.LEFT_SHOULDER, ang.LEFT_HIP),
+            (ang.RIGHT_SHOULDER, ang.RIGHT_HIP),
+        ]
+        for a, b in connections:
+            pa, pb = px(a), px(b)
+            if pa and pb:
+                cv2.line(annotated, pa, pb, (0, 255, 0), 2)
+
+        for idx in (ang.NOSE, ang.LEFT_EAR, ang.RIGHT_EAR, ang.LEFT_SHOULDER,
+                    ang.RIGHT_SHOULDER, ang.LEFT_HIP, ang.RIGHT_HIP):
+            p = px(idx)
+            if p:
+                cv2.circle(annotated, p, 5, (0, 165, 255), -1)
+
+        return annotated
 
     def close(self) -> None:
         self._landmarker.close()

@@ -9,8 +9,14 @@ from winotify import Notification, audio
 
 
 class ToastNotifier:
-    def __init__(self, cooldown_seconds: float = 300.0, app_id: str = "Escapula"):
+    def __init__(
+        self,
+        cooldown_seconds: float = 300.0,
+        duration: str = "short",
+        app_id: str = "Escapula",
+    ):
         self.cooldown_seconds = cooldown_seconds
+        self.duration = duration
         self.app_id = app_id
         self._last_notified: Optional[float] = None
 
@@ -23,7 +29,7 @@ class ToastNotifier:
             app_id=self.app_id,
             title="Corrige tu postura",
             msg=f"Llevas encorvado {int(sustained_seconds)}s. Enderezate.",
-            duration="short",
+            duration=self.duration,
         )
         toast.set_audio(audio.Default, loop=False)
         toast.show()

@@ -70,7 +70,7 @@ class PostureStateMachine:
         if not votes:
             return None
         bad_fraction = sum(votes) / len(votes)
-        return bad_fraction >= 0.6
+        return bad_fraction >= self.settings.smoothing_bad_vote_ratio
 
     def update(self, reading: Optional[PostureReading], now: float) -> PostureState:
         raw_bad = frame_is_bad(reading, self.calibration, self.settings)
@@ -78,9 +78,11 @@ class PostureStateMachine:
         smoothed = self._smoothed_is_bad(now)
 
         if smoothed is None:
-            # No conclusive recent signal — don't flip state on missing data,
-            # but do let a long enough silence decay ALERTED/SUSPECT back to
-            # UNKNOWN so a permanently-empty chair doesn't stay "alerted".
+            # No conclusive recent signal for this tick — don't flip state on
+            # missing data, but do let a long enough silence decay
+            # ALERTED/SUSPECT back to UNKNOWN so a permanently-empty chair
+            # doesn't stay "alerted". Note: bad_since is deliberately left
+            # untouched here (see the SUSPECT->ALERTED check below).
             if self.state in (PostureState.SUSPECT, PostureState.ALERTED):
                 cutoff = now - max(
                     self.settings.bad_posture_hold_seconds,
@@ -90,18 +92,12 @@ class PostureStateMachine:
                     self.state = PostureState.UNKNOWN
                     self.bad_since = None
                     self.good_since = None
-            return self.state
-
-        if smoothed:
+        elif smoothed:
             self.good_since = None
             if self.bad_since is None:
                 self.bad_since = now
             if self.state in (PostureState.GOOD, PostureState.UNKNOWN):
                 self.state = PostureState.SUSPECT
-            if self.state == PostureState.SUSPECT:
-                held_for = now - self.bad_since
-                if held_for >= self.settings.bad_posture_hold_seconds:
-                    self.state = PostureState.ALERTED
         else:
             self.bad_since = None
             if self.good_since is None:
@@ -112,5 +108,15 @@ class PostureStateMachine:
                     self.state = PostureState.GOOD
             elif self.state == PostureState.UNKNOWN:
                 self.state = PostureState.GOOD
+
+        # Checked on every tick (not only ones that vote "bad") so a run of
+        # inconclusive frames in between — e.g. the distance gate firing
+        # because leaning in for a slouch also changes distance to the
+        # camera — doesn't silently stall the elapsed-time count toward
+        # ALERTED.
+        if self.state == PostureState.SUSPECT and self.bad_since is not None:
+            held_for = now - self.bad_since
+            if held_for >= self.settings.bad_posture_hold_seconds:
+                self.state = PostureState.ALERTED
 
         return self.state

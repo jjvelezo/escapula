@@ -14,8 +14,10 @@ from dataclasses import dataclass
 from . import config
 from .alerts.tray import TrayController
 from .alerts.toast import ToastNotifier
+from .alerts.sound import play_alert_beep
 from .calibration import run_calibration
 from .capture import WebcamCapture
+from .debug_view import DebugPreview
 from .detectors.ai_detector import AIPostureDetector
 from .detectors.heuristic_detector import HeuristicPostureDetector
 from .posture_state import PostureState, PostureStateMachine
@@ -58,7 +60,10 @@ def run() -> None:
             config.save_settings(settings)
 
         state_machine = PostureStateMachine(settings, settings.calibration)
-        toast_notifier = ToastNotifier(cooldown_seconds=settings.toast_cooldown_seconds)
+        toast_notifier = ToastNotifier(
+            cooldown_seconds=settings.toast_cooldown_seconds,
+            duration=settings.toast_duration,
+        )
 
         def on_pause_toggle(paused: bool) -> None:
             control.paused = paused
@@ -72,10 +77,18 @@ def run() -> None:
 
         tray = None
         if settings.tray_enabled:
-            tray = TrayController(on_pause_toggle, on_recalibrate, on_quit)
+            tray = TrayController(
+                on_pause_toggle,
+                on_recalibrate,
+                on_quit,
+                blink_interval_seconds=settings.tray_blink_interval_seconds,
+            )
             tray.run_detached()
 
+        debug_preview = DebugPreview() if settings.debug_preview_enabled else None
+
         previous_state = PostureState.UNKNOWN
+        last_sound_alert: float | None = None
         try:
             for frame in cap.frames():
                 if control.quit_requested:
@@ -100,12 +113,31 @@ def run() -> None:
                 if tray is not None:
                     tray.set_state(_STATE_TO_TRAY[state])
 
+                if debug_preview is not None:
+                    bad_since_elapsed = (
+                        now - state_machine.bad_since if state_machine.bad_since else None
+                    )
+                    debug_preview.show(
+                        frame, detector, reading, settings.calibration, settings,
+                        state, bad_since_elapsed,
+                    )
+
                 if state == PostureState.ALERTED:
                     sustained = now - (state_machine.bad_since or now)
                     if settings.toast_enabled:
                         toast_notifier.notify_bad_posture(now, sustained)
+                    if settings.sound_alert_enabled and (
+                        last_sound_alert is None
+                        or (now - last_sound_alert) >= settings.sound_alert_interval_seconds
+                    ):
+                        play_alert_beep(
+                            settings.sound_alert_frequency_hz,
+                            settings.sound_alert_duration_ms,
+                        )
+                        last_sound_alert = now
                 elif previous_state == PostureState.ALERTED:
                     toast_notifier.reset()
+                    last_sound_alert = None
 
                 previous_state = state
         except KeyboardInterrupt:
@@ -114,5 +146,7 @@ def run() -> None:
             detector.close()
             if tray is not None:
                 tray.stop()
+            if debug_preview is not None:
+                debug_preview.close()
 
     print("Escapula stopped.")

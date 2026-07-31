@@ -37,7 +37,7 @@ def _wait_for_key(cap: WebcamCapture, prompt_lines: List[str], target_keys: set)
 
 
 def _collect_average(
-    detector: PostureDetector, cap: WebcamCapture, num_samples: int = 10
+    detector: PostureDetector, cap: WebcamCapture, num_samples: int
 ) -> Optional[Tuple[float, float, float]]:
     readings: List[PostureReading] = []
     attempts = 0
@@ -78,7 +78,7 @@ def run_calibration(
         ],
         {SPACE},
     )
-    good = _collect_average(detector, cap)
+    good = _collect_average(detector, cap, settings.calibration_num_samples)
     if good is None:
         cv2.destroyWindow(WINDOW_NAME)
         raise RuntimeError(
@@ -96,14 +96,23 @@ def run_calibration(
         {SPACE, S_KEY},
     )
 
-    bad = _collect_average(detector, cap) if key == SPACE else None
+    bad = (
+        _collect_average(detector, cap, settings.calibration_num_samples)
+        if key == SPACE
+        else None
+    )
 
     cv2.destroyWindow(WINDOW_NAME)
 
     if bad is not None:
         bad_neck, bad_shoulder, _ = bad
-        neck_tolerance = max(8.0, 0.35 * (bad_neck - good_neck))
-        shoulder_tolerance = max(5.0, 0.35 * (bad_shoulder - good_shoulder))
+        ratio = settings.calibration_tolerance_ratio
+        neck_tolerance = max(
+            settings.calibration_min_neck_tolerance, ratio * (bad_neck - good_neck)
+        )
+        shoulder_tolerance = max(
+            settings.calibration_min_shoulder_tolerance, ratio * (bad_shoulder - good_shoulder)
+        )
     else:
         neck_tolerance = settings.default_neck_tolerance
         shoulder_tolerance = settings.default_shoulder_tolerance

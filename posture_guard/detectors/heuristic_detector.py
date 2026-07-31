@@ -28,6 +28,7 @@ class HeuristicPostureDetector:
         self._face_cascade = cv2.CascadeClassifier(cascade_path)
         if self._face_cascade.empty():
             raise RuntimeError(f"Failed to load Haar cascade from {cascade_path}")
+        self._last_face_box: Optional[tuple] = None
 
     def detect(self, frame_bgr: np.ndarray) -> Optional[PostureReading]:
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
@@ -35,10 +36,12 @@ class HeuristicPostureDetector:
             gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60)
         )
         if len(faces) == 0:
+            self._last_face_box = None
             return None
 
         # Largest detected face = the one closest to the camera (the user).
         x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
+        self._last_face_box = (x, y, w, h)
         frame_h, frame_w = frame_bgr.shape[:2]
 
         face_center_x = x + w / 2
@@ -65,6 +68,13 @@ class HeuristicPostureDetector:
             shoulder_metric=shoulder_metric,
             scale_px=float(w),
         )
+
+    def draw_debug(self, frame_bgr: np.ndarray) -> np.ndarray:
+        annotated = frame_bgr.copy()
+        if self._last_face_box is not None:
+            x, y, w, h = self._last_face_box
+            cv2.rectangle(annotated, (x, y), (x + w, y + h), (0, 165, 255), 2)
+        return annotated
 
     def close(self) -> None:
         pass
