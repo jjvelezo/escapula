@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+
+# Virtualenv
+.venv/
+venv/
+env/
+
+# Downloaded ML model (auto-fetched on first run, not source)
+models/
+
+# Local calibration/settings (also lives in %APPDATA%\PostureGuard, this
+# covers it if it's ever generated inside the project folder instead)
+config/
+*.local.json
+
+# Editor/OS cruft
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# AI tooling / assistant-generated docs — not meant to ship in the repo
+CLAUDE.md
+.claude/
