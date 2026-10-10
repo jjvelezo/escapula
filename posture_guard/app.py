@@ -48,12 +48,19 @@ _STATE_TO_TRAY = {
 
 def run() -> None:
     settings = config.load_settings()
+    # Rewrite the file so options added in newer versions show up in an
+    # existing config.jsonc (user values and calibration are preserved).
+    config.save_settings(settings)
+    print(f"Configuracion: {config.config_path()}")
     print(f"Escapula starting in '{settings.mode}' mode.")
 
     detector = _make_detector(settings.mode)
     control = AppControl()
 
-    with WebcamCapture(frame_interval_seconds=settings.frame_interval_seconds) as cap:
+    with WebcamCapture(
+        camera_index=settings.camera_index,
+        frame_interval_seconds=settings.frame_interval_seconds,
+    ) as cap:
         if settings.calibration is None:
             print("Primera ejecucion: iniciando calibracion...")
             settings.calibration = run_calibration(detector, cap, settings)
@@ -63,6 +70,7 @@ def run() -> None:
         toast_notifier = ToastNotifier(
             cooldown_seconds=settings.toast_cooldown_seconds,
             duration=settings.toast_duration,
+            sound_enabled=settings.toast_sound_enabled,
         )
 
         def on_pause_toggle(paused: bool) -> None:

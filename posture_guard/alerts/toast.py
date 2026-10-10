@@ -13,10 +13,12 @@ class ToastNotifier:
         self,
         cooldown_seconds: float = 300.0,
         duration: str = "short",
+        sound_enabled: bool = True,
         app_id: str = "Escapula",
     ):
         self.cooldown_seconds = cooldown_seconds
         self.duration = duration
+        self.sound_enabled = sound_enabled
         self.app_id = app_id
         self._last_notified: Optional[float] = None
 
@@ -31,7 +33,7 @@ class ToastNotifier:
             msg=f"Llevas encorvado {int(sustained_seconds)}s. Enderezate.",
             duration=self.duration,
         )
-        toast.set_audio(audio.Default, loop=False)
+        toast.set_audio(audio.Default if self.sound_enabled else audio.Silent, loop=False)
         toast.show()
         return True
 

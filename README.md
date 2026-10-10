@@ -1,149 +1,117 @@
-# Escapula
+<h1 align="center">Escapula</h1>
 
-![Python](https://img.shields.io/badge/python-3.11-blue?logo=python&logoColor=white)
-![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white)
-![MediaPipe](https://img.shields.io/badge/AI-MediaPipe%20Pose%20Landmarker-orange)
-![OpenCV](https://img.shields.io/badge/CV-OpenCV-5C3EE8?logo=opencv&logoColor=white)
-![Privacy](https://img.shields.io/badge/privacy-100%25%20local-brightgreen)
+<p align="center">
+  <strong>Webcam-based posture monitor for Windows</strong><br>
+  Watches your posture through the webcam and alerts you when you slouch for too long.
+</p>
 
-Escapula is a lightweight Windows background utility that watches you through
-your webcam and nudges you when you slouch or let your head creep forward for
-too long. It lives in the system tray, stays quiet during normal movement,
-and only interrupts you with a Windows toast notification once bad posture
-has been genuinely sustained.
+<p align="center">
+  <img src="docs/how-it-works.jpg" alt="Escapula detecting good vs. slouched posture from the webcam" width="900">
+</p>
 
-It's a personal project being run side-by-side against an iPhone/AirPods-based
-posture app (Posture Pal), to see whether a webcam-based approach on Windows
-is a viable/better alternative. This repo only covers the webcam side.
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.11-blue?logo=python&logoColor=white" alt="Python 3.11">
+  <img src="https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white" alt="Windows">
+  <img src="https://img.shields.io/badge/AI-MediaPipe-orange" alt="MediaPipe">
+  <img src="https://img.shields.io/badge/privacy-100%25%20local-brightgreen" alt="100% local">
+</p>
 
-## Why it exists
+---
 
-Sitting at a desk for long stretches easily turns into slouching or leaning
-the head forward without noticing. Escapula's goal is to catch that pattern
-early and give a lightweight nudge to sit up straight — without being noisy,
-without false-alarming on brief movements (reaching for something, glancing
-down), and without ever sending your webcam feed anywhere.
+## Features
 
-**Privacy is a hard constraint, not an afterthought.** Webcam frames are only
-ever held in memory — never written to disk, never transmitted over the
-network. Only derived numbers (joint angles, bounding-box geometry) leave the
-capture/detection code. All AI inference runs 100% locally on your machine;
-there is no cloud API call anywhere in this app.
+- **Two detection modes** — `ai` (MediaPipe pose model, real neck/shoulder angles) or `heuristic` (OpenCV face detection, no model).
+- **Personal calibration** — learns *your* good posture instead of using generic thresholds.
+- **No false alarms** — bad posture must be sustained (~10 s) before alerting; brief movements are ignored.
+- **Configurable alerts** — tray icon color, Windows notification and repeating beep, each one on/off.
+- **Private by design** — frames live only in memory; the model runs offline on your CPU.
 
 ## How it works
 
-Escapula is a simple pipeline: `webcam frame → posture reading → smoothed
-state → alert`. Each stage exists to solve one specific problem.
+Each webcam frame (2 fps) goes through [MediaPipe's Pose Landmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker), an on-device model that tracks 33 body landmarks. Escapula only uses the **ears, nose, shoulders and hips**: from them it computes the **neck angle** (ear vs. shoulder) and a **shoulder slouch score**, and compares them with your calibrated limits.
 
-```
- Webcam (2fps)  →  Detector  →  Smoothing/Hysteresis  →  Tray + Toast
-   capture.py    ai/heuristic     posture_state.py       alerts/
-```
+<p align="center">
+  <img src="https://mediapipe.dev/images/mobile/pose_tracking_full_body_landmarks.png" alt="MediaPipe Pose Landmarker's 33 body landmarks" width="480"><br>
+  <sub>The 33 landmarks MediaPipe tracks per frame (image: Google MediaPipe).</sub>
+</p>
 
-### 1. Capture
+A sliding-window vote filters per-frame noise, and a `GOOD → SUSPECT → ALERTED` state machine only alerts once bad posture has lasted long enough, clearing again after a few seconds of good posture.
 
-Frames are grabbed at a low, throttled rate (~2fps by default). Posture
-changes slowly, and this is meant to sit quietly in the background — no
-reason to burn CPU or battery watching video at 30fps to detect something
-that changes over minutes, not milliseconds.
+<sub>The image at the top is an illustration — the real live view can be enabled with `debug_preview_enabled` in `config.jsonc`.</sub>
 
-### 2. Detect — two swappable backends
+## Installation
 
-Turning a frame into a "how's your posture right now" reading is the one part
-of the pipeline that's genuinely hard, so Escapula ships two interchangeable
-approaches and lets you A/B them:
-
-- **AI mode** uses [MediaPipe's Pose Landmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker),
-  a 33-point body pose model, to compute real neck and shoulder angles.
-
-  <img src="https://mediapipe.dev/images/mobile/pose_tracking_full_body_landmarks.png" alt="MediaPipe Pose Landmarker's 33 body landmarks" width="480">
-
-  *The 33 landmarks MediaPipe tracks per frame (image: Google MediaPipe).
-  Escapula only uses the shoulder/ear/hip points to compute posture angles —
-  the rest is discarded.*
-
-  The model runs fully offline through MediaPipe's bundled CPU runtime
-  (TFLite + XNNPACK). It's downloaded once, on first run, from Google's
-  public model bucket, cached in `models/`, and never touched again — after
-  that it works with no internet connection at all.
-
-- **Heuristic mode** is a zero-ML fallback: OpenCV's built-in Haar cascade
-  face detector plus simple bounding-box geometry (vertical position,
-  height/width ratio) as a cruder proxy for posture. No model download, no
-  inference cost — useful as a baseline to compare the AI mode against.
-
-### 3. Calibrate
-
-Everyone's "good posture" looks different — a short console wizard (with a
-live camera preview) captures your own baseline the first time you run the
-app, so thresholds are personal rather than one-size-fits-all.
-
-### 4. Smooth and debounce — why it doesn't nag you
-
-This is the part that makes Escapula usable instead of annoying. Two layers
-of filtering sit between "the detector saw something" and "you get
-interrupted":
-
-1. A **sliding-window majority vote** smooths out per-frame jitter (a single
-   noisy frame doesn't flip your state).
-2. A `GOOD → SUSPECT → ALERTED` **hysteresis state machine** requires bad
-   posture to be *sustained* for a while (~20s by default) before alerting,
-   but only requires good posture to persist briefly (~5s) before clearing
-   the alert.
-
-That asymmetry is deliberate: leaning down for a few seconds to grab
-something off your desk should never trigger a notification, but genuinely
-slouching for 20+ seconds should.
-
-### 5. Alert
-
-- A **system tray icon** changes color (green → amber → red) as an early,
-  non-intrusive signal of your current state.
-- A **Windows toast notification** (with sound) fires once bad posture is
-  confirmed, with a cooldown so a long uninterrupted slouch doesn't spam you
-  with repeat notifications.
-
-## Installing and running it
-
-Requires **Python 3.11** specifically — MediaPipe's PyPI wheels don't yet
-support 3.13, so the virtualenv must be created with 3.11 explicitly even if
-you have a newer interpreter installed too.
+Requires **Windows 10/11**, a webcam and **Python 3.11** (MediaPipe doesn't support 3.13 yet — check with `py -0`).
 
 ```powershell
+git clone https://github.com/jjvelezo/escapula.git
+cd escapula
 py -3.11 -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
+```
+
+## Usage
+
+```powershell
+.venv\Scripts\activate
 python escapula.py
 ```
 
-On first run:
+**First run**
 
-1. A short calibration wizard opens with a live camera preview — sit in your
-   normal "good" posture and follow the on-screen prompts.
-2. Once calibrated, Escapula minimizes to the system tray and starts
-   watching. The tray icon color tells you the current state at a glance;
-   a toast notification appears if bad posture is sustained.
+1. The AI model (~6 MB) downloads once into `models/`.
+2. A calibration window opens: sit up straight and press **SPACE**, then slouch as you usually do and press **SPACE** again (or **S** to skip).
+3. Escapula keeps running in the background with an icon in the system tray.
 
-Switch between AI and heuristic detection by editing `mode` in
-`%APPDATA%\PostureGuard\config.json` (this file also stores your calibration
-baseline and the timing thresholds described above — there's no separate
-settings UI yet, so it's the settings UI for now).
+**Tray icon**
 
-## Project layout
-
-| Path | Responsibility |
+| Color | Meaning |
 |---|---|
-| `escapula.py` | Entry point |
-| `posture_guard/app.py` | Composition root — wires the pipeline together |
-| `posture_guard/capture.py` | Webcam loop |
-| `posture_guard/detectors/ai_detector.py` | MediaPipe Pose Landmarker backend |
-| `posture_guard/detectors/heuristic_detector.py` | OpenCV Haar cascade backend |
-| `posture_guard/angles.py` | Neck/shoulder angle math for AI mode |
-| `posture_guard/calibration.py` | Console + camera-preview calibration wizard |
-| `posture_guard/posture_state.py` | Smoothing + hysteresis state machine |
-| `posture_guard/alerts/tray.py` | System tray icon |
-| `posture_guard/alerts/toast.py` | Windows toast notifications |
-| `posture_guard/config.py` | Settings/calibration persistence |
+| 🟢 Green | Good posture |
+| 🟡 Amber | Bad posture, not yet sustained |
+| 🔴 Red (blinking) | Alert — sit up straight |
+| ⚪ Gray | No reading (nobody in frame) |
+| 🔵 Blue | Paused |
 
-No build step, linter, or test suite is configured yet — this is a small
-single-developer utility.
+Right-click it to **Pause**, **Recalibrate** or **Quit**.
+
+## Configuration
+
+All options live in `config.jsonc` at the project root, created on the first run. Every option has a comment explaining it; the most common ones are at the top. Close Escapula, edit the file, and start it again.
+
+| Option | Default | Description |
+|---|---|---|
+| `mode` | `"ai"` | `"ai"` or `"heuristic"`. Recalibrate after changing. |
+| `camera_index` | `0` | Webcam to use (`0`, `1`, `2`…). |
+| `debug_preview_enabled` | `false` | Live window showing the detection (skeleton, angles, state). |
+| `tray_enabled` | `true` | Colored tray icon. |
+| `toast_enabled` | `true` | Windows notification. |
+| `toast_sound_enabled` | `true` | Sound on the notification. |
+| `toast_cooldown_seconds` | `300` | Minimum time between notifications. |
+| `sound_alert_enabled` | `true` | Repeating beep while alerted. |
+| `sound_alert_interval_seconds` | `8` | Time between beeps. |
+| `bad_posture_hold_seconds` | `10` | How long bad posture must last before alerting. |
+| `good_posture_release_seconds` | `5` | How long good posture must last to clear the alert. |
+
+To get **color only, no sound**, set `toast_sound_enabled` and `sound_alert_enabled` to `false`.
+To redo calibration, use **Recalibrate** in the tray menu.
+
+## Privacy
+
+Webcam frames are never written to disk or transmitted. Only derived numbers (angles, positions) leave the detection code, and all inference runs locally — there are no cloud calls.
+
+## Project structure
+
+```
+escapula.py                 Entry point
+posture_guard/
+├── app.py                  Wires the pipeline together
+├── capture.py              Webcam loop
+├── calibration.py          Calibration wizard
+├── posture_state.py        Smoothing + state machine
+├── config.py               Settings (config.jsonc)
+├── debug_view.py           Live debug preview
+├── detectors/              ai_detector.py · heuristic_detector.py
+└── alerts/                 tray.py · toast.py · sound.py
+```

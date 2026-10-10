@@ -1,4 +1,4 @@
-"""Optional on-screen live preview (toggle via config.json:
+"""Optional on-screen live preview (toggle via config.jsonc:
 "debug_preview_enabled") so posture detection can be watched happening in
 real time, instead of only during calibration.
 

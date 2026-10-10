@@ -55,6 +55,7 @@ class PostureStateMachine:
         self.settings = settings
         self.calibration = calibration
         self._window: Deque[Tuple[float, Optional[bool]]] = deque()
+        self._last_conclusive: Optional[float] = None
         self.state = PostureState.UNKNOWN
         self.bad_since: Optional[float] = None
         self.good_since: Optional[float] = None
@@ -75,6 +76,8 @@ class PostureStateMachine:
     def update(self, reading: Optional[PostureReading], now: float) -> PostureState:
         raw_bad = frame_is_bad(reading, self.calibration, self.settings)
         self._window.append((now, raw_bad))
+        if raw_bad is not None:
+            self._last_conclusive = now
         smoothed = self._smoothed_is_bad(now)
 
         if smoothed is None:
@@ -88,7 +91,9 @@ class PostureStateMachine:
                     self.settings.bad_posture_hold_seconds,
                     self.settings.good_posture_release_seconds,
                 )
-                if all(t < cutoff for t, _ in self._window) or not self._window:
+                # The window itself keeps filling with fresh None entries, so
+                # track the last conclusive reading separately.
+                if self._last_conclusive is None or self._last_conclusive < cutoff:
                     self.state = PostureState.UNKNOWN
                     self.bad_since = None
                     self.good_since = None
